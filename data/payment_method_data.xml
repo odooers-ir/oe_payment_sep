@@ -8,7 +8,7 @@
         <field name="image" type="base64" file="oe_payment_sep/static/description/icon.png"/>
         <field name="support_tokenization">False</field>
         <field name="support_express_checkout">False</field>
-        <field name="support_refund"></field>
+        <!-- Refund support is disabled by default if not specified -->
         <field name="supported_country_ids"
                eval="[Command.set([
                          ref('base.ir'),

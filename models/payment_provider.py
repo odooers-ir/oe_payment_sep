@@ -2,16 +2,13 @@
 
 import logging
 import pprint
-
 import requests
-from werkzeug import urls
+from zeep import Client
 
-from odoo import _, fields, models, service
+from odoo import _, fields, models
 from odoo.exceptions import ValidationError
 
 from odoo.addons.oe_payment_sep import const
-
-from zeep import Client
 
 _logger = logging.getLogger(__name__)
 
@@ -23,8 +20,14 @@ class PaymentProvider(models.Model):
         selection_add=[('sep', 'SEP')], ondelete={'sep': 'set default'}
     )
     
-    sep_terminal_id = fields.Char(string="Terminal ID", help="The ID solely used to identify the terminal account with SEP (Saman Electronic Payment)", required_if_provider='sep')
-    sep_password = fields.Char(string="Terminal Password", size=64, required_if_provider='sep', groups='base.group_system')
+    sep_terminal_id = fields.Char(
+        string="Terminal ID",
+        help="The ID solely used to identify the terminal account with SEP (Saman Electronic Payment)"
+    )
+    sep_password = fields.Char(
+        string="Terminal Password",
+        groups='base.group_system'
+    )
 
     #=== BUSINESS METHODS ===#
     
@@ -38,17 +41,7 @@ class PaymentProvider(models.Model):
         return supported_currencies
 
     def _sep_make_request(self, data=None):
-        """ Make a request at SEP (Saman Electronic Payment) endpoint.
-
-        Note: self.ensure_one()
-
-        :param str endpoint: The endpoint to be reached by the request
-        :param dict data: The payload of the request
-        :param str method: The HTTP method of the request
-        :return The JSON-formatted content of the response
-        :rtype: dict
-        :raise: ValidationError if an HTTP error occurs
-        """
+        """ Make a request at SEP (Saman Electronic Payment) endpoint. """
         self.ensure_one()
         endpoint = 'https://sep.shaparak.ir/OnlinePG/OnlinePG'
 
@@ -81,26 +74,19 @@ class PaymentProvider(models.Model):
     
 
     def _sep_verify_request(self, data=None):
-        """ Make a request at SEP (Saman Electronic Payment) endpoint.
-
-        Note: self.ensure_one()
-
-        :param str endpoint: The endpoint to be reached by the request
-        :param dict data: The payload of the request
-        :param str method: The HTTP method of the request
-        :return The JSON-formatted content of the response
-        :rtype: dict
-        :raise: ValidationError if an HTTP error occurs
-        """
+        """ Verify transaction using SEP (Saman Electronic Payment) SOAP service. """
         self.ensure_one()
         endpoint = 'https://verify.sep.ir/payments/referencepayment.asmx?WSDL'
 
         reference = data.get('RefNum')
+        response = None
 
         try:
             client = Client(wsdl=endpoint)
+            # Call the service using the correct terminal ID
             response = client.service.verifyTransaction(reference, self.sep_terminal_id)
         except Exception as e:
-            print (e.message)
+            # e.message is deprecated in Python 3, use str(e) or logging
+            _logger.error("SEP Verify Request failed: %s", str(e))
 
         return response

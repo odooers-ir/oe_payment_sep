@@ -6,7 +6,6 @@ from werkzeug import urls
 from odoo import _, models
 from odoo.exceptions import ValidationError
 
-from odoo.addons.oe_payment_sep import const
 from odoo.addons.oe_payment_sep.controllers.main import SEPController
 
 
@@ -17,14 +16,7 @@ class PaymentTransaction(models.Model):
     _inherit = 'payment.transaction'
 
     def _get_specific_rendering_values(self, processing_values):
-        """ Override of payment to return SEP-specific rendering values.
-
-        Note: self.ensure_one() from `_get_processing_values`
-
-        :param dict processing_values: The generic and specific processing values of the transaction
-        :return: The dict of provider-specific rendering values
-        :rtype: dict
-        """
+        """ Override of payment to return SEP-specific rendering values. """
         res = super()._get_specific_rendering_values(processing_values)
         if self.provider_code != 'sep':
             return res
@@ -33,14 +25,10 @@ class PaymentTransaction(models.Model):
         return payload
     
     def _sep_prepare_payment_request_payload(self):
-        """ Create the payload for the payment request based on the transaction values.
-
-        :return: The request payload
-        :rtype: dict
-        """
+        """ Create the payload for the payment request based on the transaction values. """
         base_url = self.provider_id.get_base_url()
         return {
-            'provider_id':self.provider_id.id,
+            'provider_id': self.provider_id.id,
             'api_url': urls.url_join(base_url, SEPController._tokenize_url),
             'Amount': int(self.amount),
             'ResNum': self.reference,
@@ -49,55 +37,42 @@ class PaymentTransaction(models.Model):
         }
 
     def _get_tx_from_notification_data(self, provider_code, notification_data):
-        """ Override of payment to find the transaction based on SEP (Saman Electronic Payment) data.
-
-        :param str provider_code: The code of the provider that handled the transaction
-        :param dict notification_data: The notification data sent by the provider
-        :return: The transaction if found
-        :rtype: recordset of `payment.transaction`
-        :raise: ValidationError if the data match no transaction
-        """
+        """ Override of payment to find the transaction based on SEP data. """
         tx = super()._get_tx_from_notification_data(provider_code, notification_data)
         if provider_code != 'sep' or len(tx) == 1:
             return tx
 
+        # Find transaction by reference (ResNum in SEP callback)
+        reference = notification_data.get('ResNum')
         tx = self.search(
-            [('reference', '=', notification_data.get('ResNum')), ('provider_code', '=', 'sep')]
+            [('reference', '=', reference), ('provider_code', '=', 'sep')]
         )
         if not tx:
             raise ValidationError("SEP (Saman Electronic Payment): " + _(
-                "No transaction found matching reference %s.", notification_data.get('ref')
+                "No transaction found matching reference %s.", reference
             ))
         return tx
 
     def _process_notification_data(self, notification_data):
-        """ Override of payment to process the transaction based on SEP (Saman Electronic Payment) data.
-
-        Note: self.ensure_one()
-
-        :param dict notification_data: The notification data sent by the provider
-        :return: None
-        """
+        """ Override of payment to process the transaction based on SEP data. """
         super()._process_notification_data(notification_data)
         if self.provider_code != 'sep':
             return
         
-        # if notification_data.get('State') == 'OK':
-        #     self.provider_reference = notification_data.get('RefNum')
-
-        ResNum = notification_data.get('ResNum')
-        transaction = self.sudo().search([('reference','=', ResNum)])
-
+        # In SEP: ResNum is our internal reference, RefNum is the bank's reference
+        res_num = notification_data.get('ResNum')
+        ref_num = notification_data.get('RefNum')
+        
+        # Verify the transaction amount with the bank
+        # Note: logic result/10 suggests conversion (e.g., Rials to Tomans or vice versa)
         result = self.provider_id._sep_verify_request(notification_data)
         
-        if notification_data.get('State') == 'OK' and result and result/10 == transaction.amount:
-            self.provider_reference = notification_data.get('RefNum')
+        # Check if State is OK and amount matches (assuming result is in Rials and amount in Tomans?)
+        if notification_data.get('State') == 'OK' and result and (result / 10) == self.amount:
+            self.provider_reference = ref_num
             self._set_done()
-            # transaction.write({'state':'done'})
         else:
+            error_msg = notification_data.get('Status', 'Unknown Error')
             self._set_error(
-                "SEP (Saman Electronic Payment): " + _("The payment encountered an error with code %s", notification_data.get('Status'))
+                "SEP (Saman Electronic Payment): " + _("The payment encountered an error with code %s", error_msg)
             )
-            # transaction.write({'state':'error'})
-
-    

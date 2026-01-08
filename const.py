@@ -1,9 +1,10 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
+
 SUPPORTED_LOCALES = [
     'fa_IR',
 ]
 
-# Currency codes in ISO 4217 format supported by mollie.
+# Currency codes in ISO 4217 format supported by SEP.
 # Note: support varies per payment method.
 SUPPORTED_CURRENCIES = [
     'IRR',

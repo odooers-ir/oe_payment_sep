@@ -4,7 +4,6 @@ import logging
 import pprint
 
 from odoo import http
-from odoo.exceptions import ValidationError
 from odoo.http import request
 
 _logger = logging.getLogger(__name__)
@@ -19,23 +18,41 @@ class SEPController(http.Controller):
         save_session=False
     )
     def sep_tokenize(self, **data):
-        provider_id = int(data.pop('provider_id'))
-        provider_sudo = request.env['payment.provider'].sudo().browse(provider_id)
+        """
+        Initiate the payment process by requesting a token from SEP.
+        """
+        provider_id = data.pop('provider_id', None)
+        if not provider_id:
+            _logger.error("SEP Controller: provider_id is missing in the request data.")
+            return request.redirect('/shop/payment')
+
+        provider_sudo = request.env['payment.provider'].sudo().browse(int(provider_id))
         
+        # Prepare payload for token request
         payload = {
             **data,
             'Action': 'token'
         }
         
-        payload['Amount']=int(payload['Amount'])*10
+        # Conversion logic: Ensure Amount is integer. 
+        # Note: Check if multiplication by 10 is for Rial <-> Toman conversion.
+        try:
+            payload['Amount'] = int(float(payload.get('Amount', 0))) * 10
+        except ValueError:
+            _logger.error("SEP Controller: Invalid Amount format.")
+            return request.redirect('/shop/payment')
 
+        # Request token from SEP
         response = provider_sudo._sep_make_request(payload)
         token = response.get('token')
-        _logger.info("Received SEP (Saman Electronic Payment) return token:\n%s", pprint.pformat(token))
+        
+        _logger.info("Received SEP return token:\n%s", pprint.pformat(token))
 
-        if(token):
-            return request.redirect('https://sep.shaparak.ir/OnlinePG/SendToken?token=%s' %token, code=301, local=False)
+        if token:
+            # Redirect user to SEP payment gateway with the received token
+            return request.redirect(f'https://sep.shaparak.ir/OnlinePG/SendToken?token={token}', code=301, local=False)
 
+        # If no token, redirect back to payment page (error handling could be improved here)
         return request.redirect('/shop/payment')
     
     @http.route(
@@ -43,19 +60,11 @@ class SEPController(http.Controller):
         save_session=False
     )
     def sep_return_from_checkout(self, **data):
-        """ Process the notification data sent by SEP (Saman Electronic Payment) after redirection from checkout.
-
-        The route is flagged with `save_session=False` to prevent Odoo from assigning a new session
-        to the user if they are redirected to this route with a POST request. Indeed, as the session
-        cookie is created without a `SameSite` attribute, some browsers that don't implement the
-        recommended default `SameSite=Lax` behavior will not include the cookie in the redirection
-        request from the payment provider to Odoo. As the redirection to the '/payment/status' page
-        will satisfy any specification of the `SameSite` attribute, the session of the user will be
-        retrieved and with it the transaction which will be immediately post-processed.
-
-        :param dict data: The notification data (only `id`) and the transaction reference (`ref`)
-                          embedded in the return URL
-        """
-        _logger.info("handling redirection from SEP (Saman Electronic Payment) with data:\n%s", pprint.pformat(data))
+        """ Process the notification data sent by SEP after redirection from checkout. """
+        _logger.info("Handling redirection from SEP with data:\n%s", pprint.pformat(data))
+        
+        # Handle the notification data to update transaction status
         request.env['payment.transaction'].sudo()._handle_notification_data('sep', data)
+        
+        # Redirect the user to the payment status page
         return request.redirect('/payment/status')
